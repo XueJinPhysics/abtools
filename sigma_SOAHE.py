@@ -60,18 +60,18 @@ class WannierMethod():
         # kpoints in Cartesian coordinates
         return np.dot(kmesh, self.bcell), kweight
     
-    def get_hk(self, kpts):
-        eikr = np.exp(1j*np.dot(kpts, self.Rws.T)) / self.deg_ws
-        hk = np.einsum("kR, Rij -> kij", eikr, self.hmn_r, optimize=True)
+    def get_hk(self, kpt):
+        eikr = np.exp(1j*np.dot(kpt, self.Rws.T)) / self.deg_ws
+        hk = np.einsum("R, Rij -> ij", eikr, self.hmn_r, optimize=True)
         
         return hk
         
-    def get_vk(self, kpts):
-        eikr = np.exp(1j*np.dot(kpts, self.Rws.T)) / self.deg_ws
+    def get_vk(self, kpt):
+        eikr = np.exp(1j*np.dot(kpt, self.Rws.T)) / self.deg_ws
         Rws = self.Rws.T
-        vkx = np.einsum("R, kR, Rij -> kij", 1j*Rws[0], eikr, self.hmn_r, optimize=True)
-        vky = np.einsum("R, kR, Rij -> kij", 1j*Rws[1], eikr, self.hmn_r, optimize=True)
-        vkz = np.einsum("R, kR, Rij -> kij", 1j*Rws[2], eikr, self.hmn_r, optimize=True)
+        vkx = np.einsum("R, R, Rij -> ij", 1j*Rws[0], eikr, self.hmn_r, optimize=True)
+        vky = np.einsum("R, R, Rij -> ij", 1j*Rws[1], eikr, self.hmn_r, optimize=True)
+        vkz = np.einsum("R, R, Rij -> ij", 1j*Rws[2], eikr, self.hmn_r, optimize=True)
         
         return np.array([vkx, vky, vkz])
     
@@ -93,12 +93,13 @@ class WannierMethod():
         
     def Gab_calculator(self, vk, deltaE=0.001):
         # Berry connection polarizability
-        invE = 1 / (energies[:, :, np.newaxis] - energies[:, np.newaxis, :] + 1j*deltaE)
-        for i in range(invE.shape[0]):
-            np.fill_diagonal(invE[i, :, :], 0)
+        invE = 1 / (energies[:, np.newaxis] - energies[np.newaxis, :] + 1j*deltaE)
+        invE = invE - np.diag(np.diag(invE))
+        #for i in range(invE.shape[0]):
+            #np.fill_diagonal(invE[i, :, :], 0)
         invE3 = invE**3
         
-        Gab = 2 * np.einsum("aknm, bkmn, knm -> abkn", vk, vk, invE3, optimize=True).real
+        Gab = 2 * np.einsum("anm, bmn, nm -> abn", vk, vk, invE3, optimize=True).real
         
         return Gab
         
@@ -117,21 +118,20 @@ if __name__ == "__main__":
 
     wan90 = WannierMethod(poscar="POSCAR", hr_path="symmed_hr_BxBy=2.dat")
     kpoints = [500, 500, 1]
-    kpts, kweight = wan90.kptsC(kpoints=kpoints)
-    hk = wan90.get_hk(kpts)
-    energies, vectors = np.linalg.eigh(hk)
-    vk = wan90.get_vk(kpts=kpts)
-
+    
     mu = 0
     T = 100
-    fd = wan90.FermiDirac(energies=energies, mu=mu, T=T)
-    fd_grad = wan90.FermiDirac_grad(energies=energies, mu=mu, T=T)
-
-    Gab = wan90.Gab_calculator(vk=vk)
+    kpts, kweight = wan90.kptsC(kpoints=kpoints)
+    for kpt in kpts:
+        hk = wan90.get_hk(kpt)
+        energies, vectors = np.linalg.eigh(hk)
+        vk = wan90.get_vk(kpt=kpt)
+        fd = wan90.FermiDirac(energies=energies, mu=mu, T=T)
+        fd_grad = wan90.FermiDirac_grad(energies=energies, mu=mu, T=T)
+        Gab = wan90.Gab_calculator(vk=vk)
 
     ef_list = np.linspace(-2,2,101)
-    for ef in ef_list:
-        1
+
 
 
 
