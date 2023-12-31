@@ -1,7 +1,8 @@
 import numpy as np
 from pymatgen.io.vasp.inputs import Poscar
 import time
-from mpi4py import MPI
+#from mpi4py import MPI
+import matplotlib.pyplot as plt
 
 class WannierMethod():
     
@@ -75,24 +76,30 @@ class WannierMethod():
         
         return np.array([vkx, vky, vkz])
     
-    def FermiDirac(self, energies, mu, T):
+    def FermiDirac(self, kpt, mu, T):
         # Fermi Dirac distribution function
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
+        
         if T == 0:
             fd = np.array(energies < mu).astype(float)
         else:
             fd = 1/(np.exp((energies - mu)/(self.kb_eV*T))+1)
         return fd
         
-    def FermiDirac_grad(self, energies, mu, T):
+    def FermiDirac_dE(self, kpt, mu, T):
         # derivation of Fermi Dirac distribution function
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
+        
         if T == 0:
             raise Exception("The temperature cannot be 0K.")
         else:
-            fd_grad = -np.exp((energies - mu)/(self.kb_eV*T)) / ((self.kb_eV*T)*(np.exp((energies - mu)/(self.kb_eV*T))+1)**2)
-        return fd_grad
+            fd_dE = -np.exp((energies - mu)/(self.kb_eV*T)) / ((self.kb_eV*T)*(np.exp((energies - mu)/(self.kb_eV*T))+1)**2)
+        return fd_dE
         
-    def Gab_calculator(self, vk, deltaE=0.001):
+    def Gab_calculator(self, kpt, deltaE=0.001):
         # Berry connection polarizability
+        vk = self.get_vk(kpt=kpt)
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
         invE = 1 / (energies[:, np.newaxis] - energies[np.newaxis, :] + 1j*deltaE)
         invE = invE - np.diag(np.diag(invE))
         #for i in range(invE.shape[0]):
@@ -100,17 +107,27 @@ class WannierMethod():
         invE3 = invE**3
         
         Gab = 2 * np.einsum("anm, bmn, nm -> abn", vk, vk, invE3, optimize=True).real
-        
         return Gab
+    
+    
+    
+
         
-    def sigma_xyy(self, vk, Gab, fd_grad):
-        # second order response coefficience 
-        int_element = 2 * (vk[0]*Gab[1,1]*fd_grad - vk[1]*Gab[0,1]*fd_grad)
+    def sigma_xyy(self, kpts, mu, T):
+        # second order response coefficience
+        int_element = np.zeros(kpts.shape[0])
+        for j in range(kpts.shape[0]):
+            kpt = kpts[j]
+            fd_dE = self.FermiDirac_dE(kpt=kpt, mu=mu, T=T)
+            Gab = self.Gab_calculator(kpt=kpt)
+            vk = self.get_vk(kpt=kpt)
+            vkn = np.diagonal(vk, axis1=1, axis2=2).real
+            int_element[j] = np.sum(vkn[0]*Gab[1,1]*fd_dE - vkn[1]*Gab[0,1]*fd_dE)
+            
         area = self.cell["a"] * self.cell["b"]
-        sigma_xyy = 1 / area * np.sum
-        
-        
-        
+        sigma_xyy = 1 / area * np.sum(int_element)
+        return sigma_xyy
+
         
 if __name__ == "__main__":
     # start time
@@ -119,18 +136,21 @@ if __name__ == "__main__":
     wan90 = WannierMethod(poscar="POSCAR", hr_path="symmed_hr_BxBy=2.dat")
     kpoints = [500, 500, 1]
     
-    mu = 0
+    #mu = 0
     T = 100
     kpts, kweight = wan90.kptsC(kpoints=kpoints)
-    for kpt in kpts:
-        hk = wan90.get_hk(kpt)
-        energies, vectors = np.linalg.eigh(hk)
-        vk = wan90.get_vk(kpt=kpt)
-        fd = wan90.FermiDirac(energies=energies, mu=mu, T=T)
-        fd_grad = wan90.FermiDirac_grad(energies=energies, mu=mu, T=T)
-        Gab = wan90.Gab_calculator(vk=vk)
-
-    ef_list = np.linspace(-2,2,101)
+    
+    nef = 31
+    mu = np.linspace(-2,2,nef)
+    sigma = np.zeros(nef)
+    for j in range(nef):
+        sigma[j] = wan90.sigma_xyy(kpts=kpts, mu=mu[j], T=T)
+        
+    
+    #for kpt in kpts:
+        #vk = wan90.get_vk(kpt=kpt)
+        #vkn = np.diagonal(vk, axis1=1, axis2=2)
+    
 
 
 
