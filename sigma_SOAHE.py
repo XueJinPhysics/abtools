@@ -2,6 +2,8 @@ import numpy as np
 from pymatgen.io.vasp.inputs import Poscar
 import time
 from mpi4py import MPI
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 class WannierMethod():
     
@@ -60,83 +62,102 @@ class WannierMethod():
         # kpoints in Cartesian coordinates
         return np.dot(kmesh, self.bcell), kweight
     
-    def get_hk(self, kpts):
-        eikr = np.exp(1j*np.dot(kpts, self.Rws.T)) / self.deg_ws
-        hk = np.einsum("kR, Rij -> kij", eikr, self.hmn_r, optimize=True)
+    def get_hk(self, kpt):
+        eikr = np.exp(1j*np.dot(kpt, self.Rws.T)) / self.deg_ws
+        hk = np.einsum("R, Rij -> ij", eikr, self.hmn_r, optimize=True)
         
         return hk
         
-    def get_vk(self, kpts):
-        eikr = np.exp(1j*np.dot(kpts, self.Rws.T)) / self.deg_ws
+    def get_vk(self, kpt):
+        eikr = np.exp(1j*np.dot(kpt, self.Rws.T)) / self.deg_ws
         Rws = self.Rws.T
-        vkx = np.einsum("R, kR, Rij -> kij", 1j*Rws[0], eikr, self.hmn_r, optimize=True)
-        vky = np.einsum("R, kR, Rij -> kij", 1j*Rws[1], eikr, self.hmn_r, optimize=True)
-        vkz = np.einsum("R, kR, Rij -> kij", 1j*Rws[2], eikr, self.hmn_r, optimize=True)
+        vkx = np.einsum("R, R, Rij -> ij", 1j*Rws[0], eikr, self.hmn_r, optimize=True)
+        vky = np.einsum("R, R, Rij -> ij", 1j*Rws[1], eikr, self.hmn_r, optimize=True)
+        vkz = np.einsum("R, R, Rij -> ij", 1j*Rws[2], eikr, self.hmn_r, optimize=True)
         
         return np.array([vkx, vky, vkz])
     
-    def FermiDirac(self, energies, mu, T):
+    def FermiDirac(self, kpt, mu, T):
         # Fermi Dirac distribution function
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
+        
         if T == 0:
             fd = np.array(energies < mu).astype(float)
         else:
             fd = 1/(np.exp((energies - mu)/(self.kb_eV*T))+1)
         return fd
         
-    def FermiDirac_grad(self, energies, mu, T):
+    def FermiDirac_dE(self, kpt, mu, T):
         # derivation of Fermi Dirac distribution function
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
+        
         if T == 0:
             raise Exception("The temperature cannot be 0K.")
         else:
-            fd_grad = -np.exp((energies - mu)/(self.kb_eV*T)) / ((self.kb_eV*T)*(np.exp((energies - mu)/(self.kb_eV*T))+1)**2)
-        return fd_grad
+            fd_dE = -np.exp((energies - mu)/(self.kb_eV*T)) / ((self.kb_eV*T)*(np.exp((energies - mu)/(self.kb_eV*T))+1)**2)
+        return fd_dE
         
-    def Gab_calculator(self, vk, deltaE=0.001):
+    def Gab_calculator(self, kpt, deltaE=0.001):
         # Berry connection polarizability
-        invE = 1 / (energies[:, :, np.newaxis] - energies[:, np.newaxis, :] + 1j*deltaE)
-        for i in range(invE.shape[0]):
-            np.fill_diagonal(invE[i, :, :], 0)
+        vk = self.get_vk(kpt=kpt)
+        energies = np.linalg.eigvalsh(self.get_hk(kpt=kpt))
+        invE = 1 / (energies[:, np.newaxis] - energies[np.newaxis, :] + 1j*deltaE)
+        invE = invE - np.diag(np.diag(invE))
+        #for i in range(invE.shape[0]):
+            #np.fill_diagonal(invE[i, :, :], 0)
         invE3 = invE**3
         
-        Gab = 2 * np.einsum("aknm, bkmn, knm -> abkn", vk, vk, invE3, optimize=True).real
-        
+        Gab = 2 * np.einsum("anm, bmn, nm -> abn", vk, vk, invE3, optimize=True).real
         return Gab
-        
-    def sigma_xyy(self, vk, Gab, fd_grad):
-        # second order response coefficience 
-        int_element = 2 * (vk[0]*Gab[1,1]*fd_grad - vk[1]*Gab[0,1]*fd_grad)
-        area = self.cell["a"] * self.cell["b"]
-        sigma_xyy = 1 / area * np.sum
-        
-        
-        
-        
-if __name__ == "__main__":
-    # start time
-    start_time = time.time()
-
-    wan90 = WannierMethod(poscar="POSCAR", hr_path="symmed_hr_BxBy=2.dat")
-    kpoints = [500, 500, 1]
-    kpts, kweight = wan90.kptsC(kpoints=kpoints)
-    hk = wan90.get_hk(kpts)
-    energies, vectors = np.linalg.eigh(hk)
-    vk = wan90.get_vk(kpts=kpts)
-
-    mu = 0
-    T = 100
-    fd = wan90.FermiDirac(energies=energies, mu=mu, T=T)
-    fd_grad = wan90.FermiDirac_grad(energies=energies, mu=mu, T=T)
-
-    Gab = wan90.Gab_calculator(vk=vk)
-
-    ef_list = np.linspace(-2,2,101)
-    for ef in ef_list:
-        1
-
-
-
-    # end time
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f"程序执行时间: {execution_time} 秒")
     
+    
+    def sigma_xyy(self, kpts, mu, T, kpart_size=100000, deltaE=0.001):
+        # second order response coefficience
+        # Parameters:
+        # kpart_size: Size of split-k. As long as the memory is large enough, you can increase it indefinitely
+        # MPI setting
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        
+        # k parts
+        kpts_split = np.split(kpts, np.arange(0, kpts.shape[0], kpart_size)[1:])
+        
+
+        int_elements = np.zeros(len(kpts_split))
+
+        for j in range(rank, len(kpts_split), size):
+            ks = kpts_split[j]
+            # Energies
+            eikr = np.exp(1j*np.dot(ks, self.Rws.T)) / self.deg_ws
+            hk = np.einsum("kR, Rij -> kij", eikr, self.hmn_r, optimize=True)
+            energies = np.linalg.eigvalsh(hk)
+            
+            # 1-order deviration of Fermi-Dirac distribution
+            fd_dE = -np.exp((energies - mu)/(self.kb_eV*T)) / ((self.kb_eV*T)*(np.exp((energies - mu)/(self.kb_eV*T))+1)**2)
+        
+            # velocity matrix
+            vkx = np.einsum("R, kR, Rij -> kij", 1j*self.Rws[:,0], eikr, self.hmn_r, optimize=True)
+            vky = np.einsum("R, kR, Rij -> kij", 1j*self.Rws[:,1], eikr, self.hmn_r, optimize=True)
+            
+            #BCP
+            invE = 1 / (energies[:, :, np.newaxis] - energies[:, np.newaxis, :] + 1j*deltaE)
+            for i in range(invE.shape[0]):
+                np.fill_diagonal(invE[i, :, :], 0)
+            invE3 = invE**3
+            
+            Gxy = 2 * np.einsum("knm, kmn, knm -> kn", vkx, vky, invE3, optimize=True).real
+            Gyy = 2 * np.einsum("knm, kmn, knm -> kn", vky, vky, invE3, optimize=True).real
+            
+            int_elements[j] = np.sum((vkx.diagonal(axis1=1, axis2=2).real * Gyy- vky.diagonal(axis1=1, axis2=2).real * Gxy) * fd_dE)
+
+        
+        global_elements = np.zeros_like(int_elements)
+        comm.Allreduce(int_elements, global_elements, op=MPI.SUM)
+        
+        if rank == 0:
+            area = self.cell["a"] * self.cell["b"]
+            sigma_xyy = 1 / area * np.sum(global_elements)
+            return sigma_xyy
+
+        
