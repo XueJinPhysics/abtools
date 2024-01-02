@@ -134,22 +134,20 @@ if __name__ == "__main__":
     start_time = time.time()
 
     wan90 = WannierMethod(poscar="POSCAR", hr_path="symmed_hr_BxBy=2.dat")
-    kpoints = [500, 500, 1]
+    kpoints = [100, 100, 1]
     
     #mu = 0
     T = 100
     kpts, kweight = wan90.kptsC(kpoints=kpoints)
     
-    nef = 31
+    nef = 201
     mu = np.linspace(-2,2,nef)
     sigma = np.zeros(nef)
     for j in range(nef):
         sigma[j] = wan90.sigma_xyy(kpts=kpts, mu=mu[j], T=T)
         
-    
-    #for kpt in kpts:
-        #vk = wan90.get_vk(kpt=kpt)
-        #vkn = np.diagonal(vk, axis1=1, axis2=2)
+    np.save("SOAHE.npy", np.array([mu, sigma]))
+
     
 
 
